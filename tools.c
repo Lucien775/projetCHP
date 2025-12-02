@@ -75,34 +75,34 @@ void Speck64128Decrypt(u32 Pt[], const u32 Ct[], u32 const rk[])
 /******************************** dictionary ********************************/
 
 /* allocate a hash table with `size` slots (12*size bytes) */
-void dict_setup(u64 size)
+void dict_shard_setup(u64 size)
 {
     dict_size = size;
     char hdsize[8];
-    human_format(dict_size * sizeof(*A), hdsize);
+    human_format(dict_size * sizeof(*A_local), hdsize);
     printf("Dictionary size: %sB\n", hdsize);
 
-    A = malloc(sizeof(*A) * dict_size);
-    if (A == NULL)
+    A_local = malloc(sizeof(*A) * dict_size);
+    if (A_local == NULL)
         err(1, "impossible to allocate the dictionnary");
     for (u64 i = 0; i < dict_size; i++)
-        A[i].k = EMPTY;
+        A_local[i].k = EMPTY;
 }
 
 /* Insert the binding key |----> value in the dictionnary */
-void dict_insert(u64 key, u64 value)
+void dict_insert_sharded(u64 key, u64 value)
 {
     u64 h = murmur64(key) % dict_size;
     for (;;) {
-        if (A[h].k == EMPTY)
+        if (A_local[h].k == EMPTY)
             break;
         h += 1;
         if (h == dict_size)
             h = 0;
     }
-    assert(A[h].k == EMPTY);
-    A[h].k = key % PRIME;
-    A[h].v = value;
+    assert(A_local[h].k == EMPTY);
+    A_local[h].k = key % PRIME;
+    A_local[h].v = value;
 }
 
 /* Query the dictionnary with this `key`.  Write values (potentially) 
@@ -116,12 +116,12 @@ int dict_probe(u64 key, int maxval, u64 values[])
     u64 h = murmur64(key) % dict_size;
     int nval = 0;
     for (;;) {
-        if (A[h].k == EMPTY)
+        if (A_local[h].k == EMPTY)
             return nval;
-        if (A[h].k == k) {
+        if (A_local[h].k == k) {
             if (nval == maxval)
                 return -1;
-            values[nval] = A[h].v;
+            values[nval] = A_local[h].v;
             nval += 1;
         }
         h += 1;

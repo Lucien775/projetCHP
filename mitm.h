@@ -11,6 +11,7 @@
 #include <err.h>
 #include <assert.h>
 #include <mpi.h>
+#include <omp.h>
 
 #define ROTL32(x,r) (((x)<<(r)) | (x>>(32-(r))))
 #define ROTR32(x,r) (((x)>>(r)) | ((x)<<(32-(r))))
@@ -20,6 +21,13 @@
 typedef uint64_t u64;       /* portable 64-bit integer */
 typedef uint32_t u32;       /* portable 32-bit integer */
 struct __attribute__ ((packed)) entry { u32 k; u64 v; };  /* hash table entry */
+struct __attribute__ ((packed)) pair_zx { u64 z; u64 x;} /*Pour l'envoi*/
+
+typedef struct {
+    struct pair_zx *data;   // pointeur vers les éléments
+    size_t size;          // nombre d'éléments utilisés
+    size_t capacity;      // capacité allouée
+} entry_list;
 
 /***************************** global variables ******************************/
 
@@ -27,7 +35,7 @@ extern u64 n;         /* block size (in bits) */
 extern u64 mask;          /* this is 2**n - 1 */
 
 extern u64 dict_size;     /* number of slots in the hash table */
-extern struct entry *A;   /* the hash table */
+extern struct entry *A_local;   /* the hash table */
 
 /* (P, C) : two plaintext-ciphertext pairs */
 extern u32 P[2][2];

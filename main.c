@@ -4,7 +4,7 @@
 u64 n = 0;
 u64 mask;
 u64 dict_size;
-struct entry *A;
+struct entry *A_local;
 
 u32 P[2][2] = {{0,0}, {0xffffffff,0xffffffff}};
 u32 C[2][2];
