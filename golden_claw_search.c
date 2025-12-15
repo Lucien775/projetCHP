@@ -147,7 +147,6 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
 
     int nres = 0;
     MPI_Reduce(&nres_local, &nres, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    return nres;
 
     if(rank == 0) {
         printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
