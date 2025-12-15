@@ -5,10 +5,10 @@
 int golden_claw_search(int maxres, u64 k1[], u64 k2[])
 {
     /*MPI init*/
-    MPI_Init(&argc, &argv);
+    MPI_Init(NULL, NULL);
     int rank; int P;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_rank(MPI_COMM_WORLD, &P);
+    MPI_Comm_size(MPI_COMM_WORLD, &P);
 
     /*On definit le type PAIR_ZX pour l'envoi MPI*/
     MPI_Datatype MPI_PAIR_ZX;
@@ -30,7 +30,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     
     /*Hash shard*/
     u64 send_counts[P];
-    memset(counts, 0, sizeof(counts));
+    memset(send_counts, 0, sizeof(send_counts));
     struct z_dest cache[local_range];
     for (u64 x = x_start; x < x_end; ++x)
     {
@@ -49,8 +49,8 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     memset(send_counts, 0, sizeof(send_counts));
     for (u64 x = x_start; x < x_end; ++x)
     {
-        z = cache[x - x_start].z;
-        dest = cache[x - x_start].dest;
+        u64 z = cache[x - x_start].z;
+        int dest = cache[x - x_start].dest;
         u64 indice = send_counts[dest]++;
         send_list[dest][indice] = (struct pair_zx){z,x};
     }
@@ -65,25 +65,26 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     /*send_displs*/
     u64 send_displs[P];
     send_displs[0] = 0;
-    for (int i = 0; i < P; ++i)
+    for (int i = 1; i < P; ++i)
         send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
 
     /*send_displs*/
     u64 recv_displs[P];
     recv_displs[0] = 0;
-    for (int i = 0; i < P; ++i)
+    for (int i = 1; i < P; ++i)
         recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
 
     /*recv_buffer*/
     u64 total_recv = 0;
-    for (int i = 0; i < P; ++i)
+    for (int i = 1; i < P; ++i)
         total_recv += recv_counts[i];
     struct pair_zx *recv_buffer = malloc(total_recv * sizeof(struct pair_zx));
 
     /*Global buffer*/
     u64 current_offset[P];
     memcpy(current_offset, send_displs, sizeof(current_offset));
-    struct pair_zx *send_buffer = malloc(send_displs[P - 1] + send_counts[P - 1] * sizeof(pair_zx));
+    u64 total_send = send_displs[P - 1] + send_counts[P - 1];
+    struct pair_zx *send_buffer = malloc(total_send * sizeof(struct pair_zx));
     for (int dest = 0; dest < P; ++dest)
         for (u64 k = 0; k < send_counts[dest]; ++k)
             send_buffer[current_offset[dest]++] = send_list[dest][k];
@@ -108,29 +109,39 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     }
 
     /****************Phase Probe*********************/
-    int nres = 0;
-    u64 ncandidates = 0;
+    int nres_local = 0;
+    u64 ncandidates_local = 0;
     u64 x[256];
-    for (u64 z = 0; z < N; z++) 
+    u64 k1_local[maxres];
+    u64 k2_local[maxres];
+
+    for (u64 z = rank; z < N; z+=P) 
     {
         u64 y = g(z);   
         int nx = dict_probe(y, 256, x);
         assert(nx >= 0);
-        ncandidates += nx;
+        ncandidates_local += nx;
+        
         for (int i = 0; i < nx; i++)
         {
             if (is_good_pair(x[i], z)) 
             {
-                if (nres == maxres)
-                    return -1;
-                k1[nres] = x[i];
-                k2[nres] = z;
+                if (nres_local == maxres)
+                    break;
+                k1_local[nres_local] = x[i];
+                k2_local[nres_local] = z;
                 printf("SOLUTION FOUND!\n");
-                nres += 1;
+                nres_local += 1;
             }
         }
     }
-    printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
+
+    u64 ncandidates = 0;
+    MPI_Reduce(&ncandidates_local, &ncandidates,1, MPI_UINT64_T, MPI_SUM,0, MPI_COMM_WORLD);
+
+    if(rank == 0) {
+        printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
+    }
     MPI_Finalize();
     return nres;
 }
