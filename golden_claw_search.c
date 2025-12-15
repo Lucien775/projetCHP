@@ -6,15 +6,14 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
 {
     /*MPI init*/
     MPI_Init(&argc, &argv);
-    int rank;
-    int P;
+    int rank; int P;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &P);
+    MPI_Comm_rank(MPI_COMM_WORLD, &P);
 
     /*On definit le type PAIR_ZX pour l'envoi MPI*/
     MPI_Datatype MPI_PAIR_ZX;
     MPI_Type_contiguous(2, MPI_UNSIGNED_LONG_LONG, &MPI_PAIR_ZX);
-    MPI_Type_commit(&MPI_PAIR_ZX);é
+    MPI_Type_commit(&MPI_PAIR_ZX);
 
     /*On lance le timer*/
     if(rank == 0) double start = wtime();
@@ -28,69 +27,52 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     u64 local_range = base_range + (rank < reste ? 1 : 0);
     u64 x_start = base_range * rank  + (rank < reste ? rank : reste);
     u64 x_end = x_start + local_range;
-
-    /***Hash shard pour répartir les z entre les processus***/
-    /*On compte cmb d'élément on envoie à chaque processus*/
-    int nb_thread;
-    #pragma omp parallel
-    {
-        #pragma omp single
-        nb_thread = omp_get_num_threads();
-    }
-
-    u64 counts [nb_thread][P];
+    
+    /*Hash shard*/
+    u64 send_counts[P];
     memset(counts, 0, sizeof(counts));
     struct z_dest cache[local_range];
-
-    #pragma omp parallel
+    for (u64 x = x_start; x < x_end; ++x)
     {
-        int t = omp_get_thread_num();
-
-        #pragma omp for 
-        for (u64 x = x_start; x < x_end; ++x)
-        {
-            u64 z = f(x);
-            int dest = murmur64(z) % P;
-            cache[x - x_start] = (struct z_dest){z, dest};
-            counts[t][dest]++;
-        }
+        u64 z = f(x);
+        int dest = murmur64(z) % P;
+        cache[x - x_start] = (struct z_dest){z, dest};
+        send_counts[dest]++;
     }
 
     /*Allocation mémoire*/
-    struct pair_zx *send_lists[nb_thread][P];
-    for (int t = 0; t < nb_thread; ++t)
-        for (int i = 0; i < P; ++i)
-            send_lists[t][i] = malloc(counts[t][i] * sizeof(pair_zx));
+    struct pair_zx *send_list[P];
+    for (int i = 0; i < P; ++i)
+        send_list[i] = malloc(send_counts[i] * sizeof(pair_zx));
 
     /*Remplissage*/
-    memset(counts, 0, sizeof(counts));
-    #pragma omp parallel
+    memset(send_counts, 0, sizeof(send_counts));
+    for (u64 x = x_start; x < x_end; ++x)
     {
-        int t = omp_get_thread_num();
-
-        #pragma omp for 
-        for (u64 x = x_start; x < x_end; ++x)
-        {
-            z = cache[x - x_start].z
-            dest = cache[x - x_start].dest;
-            u64 indice = counts[t][dest]++;
-            send_lists[t][dest][indice] = (struct pair_zx){z,x};
-        }
+        z = cache[x - x_start].z;
+        dest = cache[x - x_start].dest;
+        u64 indice = send_counts[dest]++;
+        send_list[dest][indice] = (struct pair_zx){z,x};
     }
 
     /***Communication***/
-    /*Send_counts*/
-    u64 send_counts[P];
-    memset(send_counts, 0, sizeof(send_counts));
-    for (int t = 0; i < nb_thread; ++t)
-        for(int dest = 0; dest < P; ++dest)
-            send_counts[dest]+= counts[t][dest];
-
-    /*recv_counts*/
+    /*recv counts*/
     u64 recv_counts[P];
     MPI_Alltoall(send_counts, 1, MPI_UNSIGNED_LONG_LONG,
                 recv_counts, 1, MPI_UNSIGNED_LONG_LONG,
                 MPI_COMM_WORLD);
+
+    /*send_displs*/
+    u64 send_displs[P];
+    send_displs[0] = 0;
+    for (int i = 0; i < P; ++i)
+        send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
+
+    /*send_displs*/
+    u64 recv_displs[P];
+    recv_displs[0] = 0;
+    for (int i = 0; i < P; ++i)
+        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
 
     /*recv_buffer*/
     u64 total_recv = 0;
@@ -98,26 +80,13 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         total_recv += recv_counts[i];
     struct pair_zx *recv_buffer = malloc(total_recv * sizeof(struct pair_zx));
 
-    /*send_offset*/
-    u64 send_offset[P];
-    send_offset[0] = 0;
-    for (int i = 0; i < P; ++i)
-        send_offset[i] = send_offset[i - 1] + send_counts[i - 1];
-
-    /*recv_offset*/
-    u64 recv_offset[P];
-    recv_offset[0] = 0;
-    for (int i = 0; i < P; ++i)
-        recv_offset[i] = recv_offset[i - 1] + recv_counts[i - 1];
-
     /*Global buffer*/
     u64 current_offset[P];
-    memcpy(current_offset, send_offset, sizeof(current_offset));
-    struct pair_zx *send_buffer = malloc(send_offset[P - 1] + send_counts[P - 1] * sizeof(pair_zx));
-    for (int t = 0; t < nb_thread; ++t)
-        for (int dest = 0; dest < P; ++dest)
-            for (u64 k = 0; k < counts[t][dest]; ++k)
-                send_buffer[current_offset[dest]++] = send_lists[t][dest][k];
+    memcpy(current_offset, send_displs, sizeof(current_offset));
+    struct pair_zx *send_buffer = malloc(send_displs[P - 1] + send_counts[P - 1] * sizeof(pair_zx));
+    for (int dest = 0; dest < P; ++dest)
+        for (u64 k = 0; k < send_counts[dest]; ++k)
+            send_buffer[current_offset[dest]++] = send_list[dest][k];
 
     /*AlltoAllv*/
     MPI_Alltoallv(send_buffer, send_counts, send_offset, MPI_PAIR_ZX,
@@ -165,3 +134,4 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     MPI_Finalize();
     return nres;
 }
+   
