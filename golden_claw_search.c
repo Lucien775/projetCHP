@@ -4,16 +4,15 @@
 /* search the "golden collision" */
 int golden_claw_search(int maxres, u64 k1[], u64 k2[])
 {
-    /*MPI init*/
-    MPI_Init(NULL, NULL);
-    int rank; int P;
+    int rank, P;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &P);
 
-    /*On definit le type PAIR_ZX pour l'envoi MPI*/
+    /* MPI datatype */
     MPI_Datatype MPI_PAIR_ZX;
     MPI_Type_contiguous(2, MPI_UNSIGNED_LONG_LONG, &MPI_PAIR_ZX);
     MPI_Type_commit(&MPI_PAIR_ZX);
+
 
     /*On lance le timer*/
     double start = 0.0;
@@ -96,6 +95,9 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
                 recv_buffer, recv_counts, recv_displs, MPI_PAIR_ZX,
                 MPI_COMM_WORLD);
 
+    /*Préparation du dictionnaire*/
+    dict_shard_setup(2 * total_recv + 1);
+
     /*Remplissage du dictionnaire*/
     for (u64 i = 0; i < total_recv; ++i)
     {
@@ -104,6 +106,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         dict_insert_sharded(z, x);
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0)
     {
         double mid = wtime();
@@ -152,9 +155,8 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     if(rank == 0) {
         printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
     }
-
+    
     MPI_Type_free(&MPI_PAIR_ZX);
-    MPI_Finalize();
     return nres;
 }
    
