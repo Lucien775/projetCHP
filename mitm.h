@@ -10,6 +10,7 @@
 #include <getopt.h>
 #include <err.h>
 #include <assert.h>
+#include <string.h>
 #include <mpi.h>
 #include <omp.h>
 
@@ -22,12 +23,7 @@ typedef uint64_t u64;       /* portable 64-bit integer */
 typedef uint32_t u32;       /* portable 32-bit integer */
 struct __attribute__ ((packed)) entry { u32 k; u64 v; };  /* hash table entry */
 struct __attribute__ ((packed)) pair_zx { u64 z; u64 x;} /*Pour l'envoi*/
-
-typedef struct {
-    struct pair_zx *data;   // pointeur vers les éléments
-    size_t size;          // nombre d'éléments utilisés
-    size_t capacity;      // capacité allouée
-} entry_list;
+struct __attribute__ ((packed)) z_dest { u64 z; u8 dest;}/*Utile*/
 
 /***************************** global variables ******************************/
 

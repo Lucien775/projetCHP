@@ -11,79 +11,126 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &P);
 
+    /*On definit le type PAIR_ZX pour l'envoi MPI*/
+    MPI_Datatype MPI_PAIR_ZX;
+    MPI_Type_contiguous(2, MPI_UNSIGNED_LONG_LONG, &MPI_PAIR_ZX);
+    MPI_Type_commit(&MPI_PAIR_ZX);é
+
     /*On lance le timer*/
     if(rank == 0) double start = wtime();
+    u64 N = (1ull << n);
 
     /**************** Phase Fill *********************/
-    /* Chaque processus crée son dictionnaire local */
-    u64 dict_size_local = 1.125 * ((1ull << n) / P);
-    dict_shard_setup(dict_size_local);
+    /*On répartit les x*/
+    u64 base_range = N / P;
+    u64 reste = N % P;
 
-    /* On répartit les x entre les processus */
-    u64 range_size = (1ull << n) / P;
-    u64 x_start = range_size * rank;
-    u64 x_end   = x_start + range_size;
+    u64 local_range = base_range + (rank < reste ? 1 : 0);
+    u64 x_start = base_range * rank  + (rank < reste ? rank : reste);
+    u64 x_end = x_start + local_range;
 
-    /* On répartit les paires (z,x) entre les processus */
+    /***Hash shard pour répartir les z entre les processus***/
+    /*On compte cmb d'élément on envoie à chaque processus*/
+    int nb_thread;
+    #pragma omp parallel
+    {
+        #pragma omp single
+        nb_thread = omp_get_num_threads();
+    }
+
+    u64 counts [nb_thread][P];
+    memset(counts, 0, sizeof(counts));
+    struct z_dest cache[local_range];
+
     #pragma omp parallel
     {
         int t = omp_get_thread_num();
-        int nb_thread = omp_get_num_threads();
 
-        u64 INITIAL_CAPACITY = range_size / (P * P);
-
-        /* Allocation des listes de chaque thread pour chaque process */
-        entry_list send_lists[nb_thread][P];
-        for (int th = 0; th < nb_thread; ++th)
-        {
-            for (int i = 0; i < P; ++i)
-            {
-                send_lists[th][i].data = malloc(INITIAL_CAPACITY * sizeof(struct pair_zx));
-                send_lists[th][i].size = 0;
-                send_lists[th][i].capacity = INITIAL_CAPACITY;
-            }
-        }
-
-        /* Boucle principale de génération */
-        #pragma omp for
+        #pragma omp for 
         for (u64 x = x_start; x < x_end; ++x)
         {
             u64 z = f(x);
             int dest = murmur64(z) % P;
-
-            if (send_lists[t][dest].size == send_lists[t][dest].capacity)
-            {
-                send_lists[t][dest].capacity *= 2;
-                send_lists[t][dest].data = realloc(send_lists[t][dest].data, send_lists[t][dest].capacity * sizeof(struct pair_zx));
-            }
-
-            send_lists[t][dest].data[send_lists[t][dest].size++] = (struct pair_zx){z, x};
+            cache[x - x_start] = (struct z_dest){z, dest};
+            counts[t][dest]++;
         }
     }
 
-    /* Fusion des listes de tous les threads pour chaque process */
-    entry_list send_lists_final[P];
-    for (int i = 0; i < P; ++i)
+    /*Allocation mémoire*/
+    struct pair_zx *send_lists[nb_thread][P];
+    for (int t = 0; t < nb_thread; ++t)
+        for (int i = 0; i < P; ++i)
+            send_lists[t][i] = malloc(counts[t][i] * sizeof(pair_zx));
+
+    /*Remplissage*/
+    memset(counts, 0, sizeof(counts));
+    #pragma omp parallel
     {
-        u64 total_size = 0;
-        for (int t = 0; t < nb_thread; ++t)
-        {
-            total_size += send_lists[t][i].size;
-        }
+        int t = omp_get_thread_num();
 
-        send_lists_final[i].data = malloc(total_size * sizeof(struct pair_zx));
-        send_lists_final[i].size = 0;
-        send_lists_final[i].capacity = total_size;
-
-        /* Copie des données de chaque thread */
-        for (int t = 0; t < nb_thread; ++t)
+        #pragma omp for 
+        for (u64 x = x_start; x < x_end; ++x)
         {
-            memcpy(send_lists_final[i].data + send_lists_final[i].size, send_lists[t][i].data, send_lists[t][i].size * sizeof(struct pair_zx));
-            send_lists_final[i].size += send_lists[t][i].size;
-            free(send_lists[t][i].data); // libération mémoire temporaire
+            z = cache[x - x_start].z
+            dest = cache[x - x_start].dest;
+            u64 indice = counts[t][dest]++;
+            send_lists[t][dest][indice] = (struct pair_zx){z,x};
         }
     }
 
+    /***Communication***/
+    /*Send_counts*/
+    u64 send_counts[P];
+    memset(send_counts, 0, sizeof(send_counts));
+    for (int t = 0; i < nb_thread; ++t)
+        for(int dest = 0; dest < P; ++dest)
+            send_counts[dest]+= counts[t][dest];
+
+    /*recv_counts*/
+    u64 recv_counts[P];
+    MPI_Alltoall(send_counts, 1, MPI_UNSIGNED_LONG_LONG,
+                recv_counts, 1, MPI_UNSIGNED_LONG_LONG,
+                MPI_COMM_WORLD);
+
+    /*recv_buffer*/
+    u64 total_recv = 0;
+    for (int i = 0; i < P; ++i)
+        total_recv += recv_counts[i];
+    struct pair_zx *recv_buffer = malloc(total_recv * sizeof(struct pair_zx));
+
+    /*send_offset*/
+    u64 send_offset[P];
+    send_offset[0] = 0;
+    for (int i = 0; i < P; ++i)
+        send_offset[i] = send_offset[i - 1] + send_counts[i - 1];
+
+    /*recv_offset*/
+    u64 recv_offset[P];
+    recv_offset[0] = 0;
+    for (int i = 0; i < P; ++i)
+        recv_offset[i] = recv_offset[i - 1] + recv_counts[i - 1];
+
+    /*Global buffer*/
+    u64 current_offset[P];
+    memcpy(current_offset, send_offset, sizeof(current_offset));
+    struct pair_zx *send_buffer = malloc(send_offset[P - 1] + send_counts[P - 1] * sizeof(pair_zx));
+    for (int t = 0; t < nb_thread; ++t)
+        for (int dest = 0; dest < P; ++dest)
+            for (u64 k = 0; k < counts[t][dest]; ++k)
+                send_buffer[current_offset[dest]++] = send_lists[t][dest][k];
+
+    /*AlltoAllv*/
+    MPI_Alltoallv(send_buffer, send_counts, send_offset, MPI_PAIR_ZX,
+                recv_buffer, recv_counts, recv_offset, MPI_PAIR_ZX,
+                MPI_COMM_WORLD);
+
+    /*Remplissage du dictionnaire*/
+    for (u64 i = 0; i < total_recv; ++i)
+    {
+        u64 z = recv_buffer[i].z;
+        u64 x = recv_buffer[i].x;
+        dict_insert_sharded(z, x);
+    }
 
     if (rank == 0)
     {
