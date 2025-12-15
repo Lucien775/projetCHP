@@ -1,20 +1,19 @@
-# /***************************** Makefile ******************************/
-
+CC = mpicc
+CFLAGS = -Wall -fopenmp -O2
+LDFLAGS = -fopenmp
 SOURCES = $(wildcard *.c)
 HEADERS = $(wildcard *.h)
 OBJ = $(SOURCES:.c=.o)
 
-FLAGS = -Wall -fopenmp
-
 all: main
 
 main: $(OBJ)
-	gcc $(FLAGS) $^ -o $@
+	$(CC) $(LDFLAGS) $^ -o $@
 
 %.o: %.c $(HEADERS)
-	gcc $(FLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f *.o main
+	rm -f $(OBJ) main
 
 .PHONY: all clean

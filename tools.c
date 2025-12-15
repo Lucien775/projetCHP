@@ -82,7 +82,7 @@ void dict_shard_setup(u64 size)
     human_format(dict_size * sizeof(*A_local), hdsize);
     printf("Dictionary size: %sB\n", hdsize);
 
-    A_local = malloc(sizeof(*A) * dict_size);
+    A_local = malloc(sizeof(*A_local) * dict_size);
     if (A_local == NULL)
         err(1, "impossible to allocate the dictionnary");
     for (u64 i = 0; i < dict_size; i++)

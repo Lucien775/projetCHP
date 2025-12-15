@@ -17,7 +17,8 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
 
     /*On lance le timer*/
     double start = 0.0;
-    if(rank == 0) double start = wtime();
+    double mid = 0.0;
+    if(rank == 0) start = wtime();
     u64 N = (1ull << n);
 
     /**************** Phase Fill *********************/
@@ -44,7 +45,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     /*Allocation mémoire*/
     struct pair_zx *send_list[P];
     for (int i = 0; i < P; ++i)
-        send_list[i] = malloc(send_counts[i] * sizeof(pair_zx));
+        send_list[i] = malloc(send_counts[i] * sizeof(struct pair_zx));
 
     /*Remplissage*/
     memset(send_counts, 0, sizeof(send_counts));
