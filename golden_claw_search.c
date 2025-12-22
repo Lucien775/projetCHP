@@ -8,7 +8,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &P);
 
-    /* MPI datatype */
+    /* MPI datatype  pour envoi*/
     MPI_Datatype MPI_PAIR_ZX;
     MPI_Type_contiguous(2, MPI_UNSIGNED_LONG_LONG, &MPI_PAIR_ZX);
     MPI_Type_commit(&MPI_PAIR_ZX);
@@ -104,6 +104,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         dict_insert_sharded(z, x);
     }
 
+    /*On attend tous le monde*/
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0)
     {
@@ -111,12 +112,14 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         printf("Fill: %.1fs\n", mid - start);
     }
 
+    /*Nettoyage mémoire*/
     for (int i = 0; i < P; ++i)
         free(send_list[i]);
     free(send_buffer);
     free(recv_buffer);
 
     /****************Phase Probe*********************/
+    /*On cherche les solutions*/
     int nres_local = 0;
     u64 ncandidates_local = 0;
     u64 x[256];
@@ -144,6 +147,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         }
     }
 
+    /***On envoie les solutions au rank 0***/
     int *sol_counts = NULL;
     int *displs = NULL;
 
@@ -185,7 +189,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         memcpy(k2, k2_all, total * sizeof(u64));
     }
 
-
+    /*Stats*/
     u64 ncandidates = 0;
     MPI_Reduce(&ncandidates_local, &ncandidates, 1, MPI_UINT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
 
@@ -193,6 +197,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
     }
     
+    /*Nettoyage mémoire*/
     if (rank == 0)
     {
         free(k1_all);
