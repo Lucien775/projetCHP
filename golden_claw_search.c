@@ -63,25 +63,23 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
                 recv_counts, 1, MPI_INT,
                 MPI_COMM_WORLD);
 
-    /*send_displs*/
+    /*send_displs & recv_displs & total_recv*/
     int send_displs[P];
     send_displs[0] = 0;
-    for (int i = 1; i < P; ++i)
-        send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
-
-    /*send_displs*/
     int recv_displs[P];
     recv_displs[0] = 0;
+    int total_recv = recv_counts[0];
     for (int i = 1; i < P; ++i)
+    {
+        send_displs[i] = send_displs[i - 1] + send_counts[i - 1];
         recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
-
-    /*recv_buffer*/
-    int total_recv = 0;
-    for (int i = 0; i < P; ++i)
         total_recv += recv_counts[i];
+    }
+        
+    /*recv_buffer*/
     struct pair_zx *recv_buffer = malloc(total_recv * sizeof(struct pair_zx));
 
-    /*Global buffer*/
+    /*send_buffer*/
     int current_offset[P];
     memcpy(current_offset, send_displs, sizeof(current_offset));
     u64 total_send = send_displs[P - 1] + send_counts[P - 1];
@@ -109,7 +107,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     MPI_Barrier(MPI_COMM_WORLD);
     if (rank == 0)
     {
-        double mid = wtime();
+        mid = wtime();
         printf("Fill: %.1fs\n", mid - start);
     }
 
@@ -125,7 +123,7 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
     u64 k1_local[maxres];
     u64 k2_local[maxres];
 
-    for (u64 z = rank; z < N; z+=P) 
+    for (u64 z = 0; z < N; ++z) 
     {
         u64 y = g(z);   
         int nx = dict_probe(y, 256, x);
@@ -146,17 +144,64 @@ int golden_claw_search(int maxres, u64 k1[], u64 k2[])
         }
     }
 
-    u64 ncandidates = 0;
-    MPI_Reduce(&ncandidates_local, &ncandidates,1, MPI_UINT64_T, MPI_SUM,0, MPI_COMM_WORLD);
+    int *sol_counts = NULL;
+    int *displs = NULL;
 
-    int nres = 0;
-    MPI_Reduce(&nres_local, &nres, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    if (rank == 0)
+    {
+        sol_counts = malloc(P * sizeof(int));
+        displs = malloc(P * sizeof(int));
+    }
+
+    MPI_Gather(&nres_local, 1, MPI_INT, sol_counts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    int total = 0;
+    if (rank == 0)
+    {
+        for (int i = 0; i < P; i++)
+        {
+            displs[i] = total;
+            total += sol_counts[i];
+        }
+    }
+
+    u64 *k1_all = NULL;
+    u64 *k2_all = NULL;
+    if (rank == 0)
+    {
+        k1_all = malloc(total * sizeof(u64));
+        k2_all = malloc(total * sizeof(u64));
+    }
+
+    MPI_Gatherv(k1_local, nres_local, MPI_UINT64_T, k1_all, sol_counts, displs, MPI_UINT64_T,
+                0, MPI_COMM_WORLD);
+
+    MPI_Gatherv(k2_local, nres_local, MPI_UINT64_T, k2_all, sol_counts, displs, MPI_UINT64_T,
+                0, MPI_COMM_WORLD);
+
+    if (rank == 0)
+    {
+        memcpy(k1, k1_all, total * sizeof(u64));
+        memcpy(k2, k2_all, total * sizeof(u64));
+    }
+
+
+    u64 ncandidates = 0;
+    MPI_Reduce(&ncandidates_local, &ncandidates, 1, MPI_UINT64_T, MPI_SUM, 0, MPI_COMM_WORLD);
 
     if(rank == 0) {
         printf("Probe: %.1fs. %" PRId64 " candidate pairs tested\n", wtime() - mid, ncandidates);
     }
     
+    if (rank == 0)
+    {
+        free(k1_all);
+        free(k2_all);
+        free(sol_counts);
+        free(displs);
+    }
+
     MPI_Type_free(&MPI_PAIR_ZX);
-    return nres;
+    return total;
 }
    
